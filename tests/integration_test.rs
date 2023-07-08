@@ -16,6 +16,14 @@ mod integration_tests {
     use crate::testutils;
 
     #[tokio::test]
+    async fn the_healthcheck_endpoints_responds_with_200() {
+        functionfirst::server::start().await;
+        let response = get("http://localhost:3000/healthcheck").await
+            .expect("HTTP GET failed.");
+        assert_eq!(StatusCode::OK, response.status());
+    }
+
+    #[tokio::test]
     #[ignore]
     async fn the_restaurant_endpoint_ranks_by_recommendations() {
         let docker = clients::Cli::default();
@@ -61,7 +69,7 @@ mod integration_tests {
             create_rating_by_user_for_restaurant(rating, &pool).await
         }
 
-        let server = functionfirst::start().await;
+        functionfirst::server::start().await;
 
         // Hit the restaurant endpoint
         let response = get("http://localhost:3000/vancouverbc/restaurants/recommended").await
@@ -80,9 +88,6 @@ mod integration_tests {
         let ids: Vec<&str> = restaurants_array.into_iter().map(|r| r["id"].as_str().unwrap()).collect();
         assert_eq!(["cafegloucesterid", "burgerking"], ids.as_slice());
 
-        // Verify return code and payload
-
-        server.stop();
         postgres.stop();
     }
 }
