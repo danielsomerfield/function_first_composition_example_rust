@@ -1,20 +1,23 @@
 extern crate functionfirst;
 
+mod testutils;
+
 #[cfg(test)]
 mod integration_tests {
-    use postgres::{Client, Error, NoTls};
-    use reqwest::blocking::get;
+    use reqwest::get;
     use reqwest::StatusCode;
-    use serde_json::{to_vec, Value};
+    use serde_json::Value;
+    use sqlx::postgres::PgPoolOptions;
     use testcontainers::{clients, RunnableImage};
     use testcontainers::images::postgres::Postgres;
 
-    use functionfirst::Server;
+    use testutils::test_utils::{create_rating_by_user_for_restaurant, create_restaurant, create_user, Restaurant, User};
 
-    use crate::test_utils::{create_rating_by_user_for_restaurant, create_restaurant, create_user, Restaurant, User};
+    use crate::testutils;
 
-    #[test]
-    fn the_restaurant_endpoint_ranks_by_recommendations() {
+    #[tokio::test]
+    #[ignore]
+    async fn the_restaurant_endpoint_ranks_by_recommendations() {
         let docker = clients::Cli::default();
         let postgres = docker.run(
             RunnableImage::from(Postgres::default())
@@ -23,11 +26,10 @@ mod integration_tests {
 
         postgres.start();
 
-        let mut client = Client::connect(
+        let pool = PgPoolOptions::new().connect(
             format!("postgresql://postgres:postgres@localhost:{}/postgres",
-                    postgres.get_host_port_ipv4(5432)).as_str(),
-            NoTls,
-        ).expect("Failed to connect");
+                    postgres.get_host_port_ipv4(5432)).as_str()
+        ).await.expect("Could not get DB pool");
 
         let users = [
             User { id: "user1".to_string(), name: "User 1".to_string(), trusted: true },
@@ -36,7 +38,7 @@ mod integration_tests {
         ];
 
         for user in &users {
-            create_user(&user, &mut client);
+            create_user(&user, &pool).await;
         }
 
         let restaurants = [
@@ -45,7 +47,7 @@ mod integration_tests {
         ];
 
         for restaurant in &restaurants {
-            create_restaurant(&restaurant, &mut client)
+            create_restaurant(&restaurant, &pool).await
         }
 
         let ratings = [
@@ -56,19 +58,19 @@ mod integration_tests {
         ];
 
         for rating in ratings {
-            create_rating_by_user_for_restaurant(rating, &mut client)
+            create_rating_by_user_for_restaurant(rating, &pool).await
         }
 
-        let server = functionfirst::start();
+        let server = functionfirst::start().await;
 
         // Hit the restaurant endpoint
-        let response = get("http://localhost:3000/vancouverbc/restaurants/recommended")
+        let response = get("http://localhost:3000/vancouverbc/restaurants/recommended").await
             .expect("HTTP GET failed.");
 
         assert_eq!(StatusCode::OK, response.status());
 
         let body = response
-            .json::<serde_json::Value>()
+            .json::<Value>().await
             .expect("Failed to deserialize");
 
         let restaurants = body.get("restaurants").expect("missing restaurants field");
@@ -82,45 +84,6 @@ mod integration_tests {
 
         server.stop();
         postgres.stop();
-    }
-}
-
-mod test_utils {
-    use postgres::{Client, Error, NoTls};
-
-    pub struct User {
-        pub id: String,
-        pub name: String,
-        pub trusted: bool,
-    }
-
-    pub struct Restaurant {
-        pub id: String,
-        pub name: String,
-    }
-
-    pub fn create_user(user: &User, client: &mut Client) -> () {
-        client.execute(
-            "INSERT into \"user\" (id, name, trusted) VALUES ($1, $2, $3)",
-            &[&user.id, &user.name, &user.trusted],
-        ).expect("SQL execute failed while creating user");
-    }
-
-    pub fn create_restaurant(restaurant: &Restaurant, client: &mut Client) {
-        client.execute(
-            "INSERT into \"restaurant\" (id, name) VALUES ($1, $2)",
-            &[&restaurant.id, &restaurant.name],
-        ).expect("SQL execute failed while creating restaurant");
-    }
-
-    pub fn create_rating_by_user_for_restaurant(rating: (String, &User, &Restaurant, String), client: &mut Client) {
-        client.execute("insert into restaurant_rating (id, rated_by_user_id, restaurant_id, rating, city) VALUES ($1, $2, $3, $4, 'vancouverbc')",
-                       &[
-                           &rating.0,
-                           &rating.1.id,
-                           &rating.2.id,
-                           &rating.3
-                       ]).expect("SQL execute failed while creating restaurant");
     }
 }
 

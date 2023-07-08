@@ -1,4 +1,5 @@
-use functionfirst::hello;
-fn main() {
-    hello();
+use functionfirst::{start};
+#[tokio::main]
+async fn main() {
+    start().await;
 }
